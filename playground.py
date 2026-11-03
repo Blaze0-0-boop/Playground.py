@@ -102,6 +102,7 @@ async def start_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/fact — случайный факт\n"
         "/stats — статистика\n"
         "/help — помощь\n"
+        "/about — о боте\n"
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -118,6 +119,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/fact — случайный факт\n"
         "/stats — статистика\n"
         "/start — главное меню\n"
+        "/about — о боте\n"
     )
 
 # --- /guess: уровни ---
@@ -275,8 +277,8 @@ async def handle_rps(update: Update, context: ContextTypes.DEFAULT_TYPE):
     del games[user_id]
 
 # --- Случайный факт ---
-async def random_fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    facts = [
+def get_facts():
+    return [
         "Пчёлы могут распознавать человеческие лица.",
         "У морских ежей нет глаз.",
         "Вода в океанах способна светиться в некоторых местах из-за биолюминесценции.",
@@ -286,20 +288,50 @@ async def random_fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Летучие мыши — единственные млекопитающие, способные к настоящему полёту.",
         "Медузы могут жить очень долго, некоторые — десятки лет.",
     ]
-    await update.message.reply_text(random.choice(facts))
 
-# --- Статистика ---
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    player = get_player_stats(user_id)
-    await update.message.reply_text(
-        f"Твоя статистика:\n"
+
+def get_random_message(messages):
+    return random.choice(messages)
+
+
+def format_about(language_code):
+    about_texts = {
+        "ru": "Я бот с мини-играми, написанный на Python 🐍",
+        "en": "I'm a mini-games bot written in Python 🐍",
+        "kk": "Мен Python тілінде жазылған шағын ойындар ботымын 🐍",
+    }
+    return about_texts.get(language_code, about_texts["ru"])
+
+
+def format_stats(player):
+    return (
+        "Твоя статистика:\n"
         f"Побед: {player['wins']}\n"
         f"Поражений: {player['loses']}\n"
         f"Всего игр: {player['games']}\n"
         f"Монет: {player['coin']}\n"
         f"Кубиков: {player['dice']}"
     )
+
+
+async def random_fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send(update, get_random_message(get_facts()))
+
+
+async def send(update, text):
+    await update.effective_message.reply_text(text)
+
+
+async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    language_code = update.effective_user.language_code
+    await send(update, format_about(language_code))
+
+
+# --- Статистика ---
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    player = get_player_stats(user_id)
+    await send(update, format_stats(player))
 
 # --- Общий обработчик текстовых сообщений ---
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -339,6 +371,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start_game))
     app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("about", about_command))
     app.add_handler(
         CallbackQueryHandler(game_level_callback, pattern=r"^guess_level:")
     )
