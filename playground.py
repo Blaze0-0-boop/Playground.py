@@ -14,20 +14,29 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
-
+def get_random_message(messages):
+    return random.choice(messages)
 DATA_FILE = Path(__file__).with_name("bot_data.json")
 
 # --- Статистика ---
 def load_stats():
-    if DATA_FILE.exists():
-        try:
-            with open(DATA_FILE, "r", encoding="utf-8") as file:
-                data = json.load(file)
-                if isinstance(data, dict):
-                    return data
-        except Exception:
-            pass
-    return {"players": {}}
+    if not DATA_FILE.exists():
+        return {"players": {}}
+
+    try:
+        with open(DATA_FILE, "r", encoding="utf-8") as file:
+            data = json.load(file)
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(
+            f"Не удалось прочитать статистику из файла {DATA_FILE}"
+        ) from error
+
+    if not isinstance(data, dict) or not isinstance(data.get("players"), dict):
+        raise ValueError(
+            f"Файл статистики {DATA_FILE} имеет неверный формат: "
+            "ожидался объект с полем 'players'."
+        )
+    return data
 
 stats = load_stats()
 
@@ -42,18 +51,27 @@ def get_player_stats(user_id):
             "wins": 0,
             "loses": 0,
             "games": 0,
+            "draws": 0,
+            "points": 0,
             "coin": 0,
             "dice": 0,
         }
-    return stats["players"][player_id]
+    player = stats["players"][player_id]
+    player.setdefault("draws", 0)
+    player.setdefault("points", player.get("wins", 0) * 3 + player["draws"])
+    return player
 
 def update_game_result(user_id, win):
     player = get_player_stats(user_id)
     player["games"] += 1
-    if win:
+    if win is True:
         player["wins"] += 1
-    else:
+        player["points"] += 3
+    elif win is False:
         player["loses"] += 1
+    else:
+        player["draws"] += 1
+        player["points"] += 1
     save_stats()
 
 # --- Состояние текущих игр ---
@@ -101,8 +119,10 @@ async def start_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/rps — камень/ножницы/бумага\n"
         "/fact — случайный факт\n"
         "/stats — статистика\n"
+        "/leaderboard — таблица лидеров\n\n"
+        "/fame — зал славы игроков с 3+ победами\n\n"
+        f"{format_leaderboard(stats.get('players', {}))}\n\n"
         "/help — помощь\n"
-        "/about — о боте\n"
     )
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -118,9 +138,78 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/rps — камень/ножницы/бумага\n"
         "/fact — случайный факт\n"
         "/stats — статистика\n"
+        "/leaderboard — таблица лидеров\n"
+        "/fame — зал славы игроков с 3+ победами\n"
         "/start — главное меню\n"
-        "/about — о боте\n"
     )
+
+
+def format_leaderboard(players):
+    if not players:
+        return "Пока нет игроков."
+
+    players_with_three_wins = [
+        (user_id, player)
+        for user_id, player in players.items()
+        if player.get("wins", 0) >= 3
+    ]
+    top_players = sorted(
+        players.items(),
+        key=lambda item: item[1].get(
+            "points",
+            item[1].get("wins", 0) * 3 + item[1].get("draws", 0),
+        ),
+        reverse=True,
+    )[:5]
+    lines = [
+        "🏆 Топ-5 по очкам (победа — 3, ничья — 1):",
+        f"Игроков с 3+ победами: {len(players_with_three_wins)}",
+    ]
+
+    for place, (user_id, player) in enumerate(top_players, start=1):
+        lines.append(
+            f"{place}. Игрок {user_id} — "
+            f"{player.get('points', player.get('wins', 0) * 3 + player.get('draws', 0))} очков"
+        )
+
+    return "\n".join(lines)
+
+
+async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send(update, format_leaderboard(stats.get("players", {})))
+
+
+async def fame(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    famous_players = [
+        (user_id, player)
+        for user_id, player in stats.get("players", {}).items()
+        if player.get("wins", 0) >= 3
+    ]
+    if not famous_players:
+        await send(update, "В зале славы пока никого нет. Набери 3 победы!")
+        return
+
+    top_players = sorted(
+        famous_players,
+        key=lambda item: item[1].get(
+            "points",
+            item[1].get("wins", 0) * 3 + item[1].get("draws", 0),
+        ),
+        reverse=True,
+    )[:5]
+    lines = ["🌟 Зал славы — игроки с 3+ победами:"]
+
+    for place, (user_id, player) in enumerate(top_players, start=1):
+        points = player.get(
+            "points",
+            player.get("wins", 0) * 3 + player.get("draws", 0),
+        )
+        lines.append(f"{place}. Игрок {user_id} — {points} очков")
+
+    await send(update, "\n".join(lines))
+
+
+
 
 # --- /guess: уровни ---
 async def guess_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -264,6 +353,7 @@ async def handle_rps(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text == bot_choice:
         result = "Ничья!"
+        update_game_result(user_id, None)
     elif win_map[text] == bot_choice:
         result = "Ты победил! 🎉"
         update_game_result(user_id, True)
@@ -277,8 +367,8 @@ async def handle_rps(update: Update, context: ContextTypes.DEFAULT_TYPE):
     del games[user_id]
 
 # --- Случайный факт ---
-def get_facts():
-    return [
+async def random_fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    facts = [
         "Пчёлы могут распознавать человеческие лица.",
         "У морских ежей нет глаз.",
         "Вода в океанах способна светиться в некоторых местах из-за биолюминесценции.",
@@ -288,50 +378,24 @@ def get_facts():
         "Летучие мыши — единственные млекопитающие, способные к настоящему полёту.",
         "Медузы могут жить очень долго, некоторые — десятки лет.",
     ]
-
-
-def get_random_message(messages):
-    return random.choice(messages)
-
-
-def format_about(language_code):
-    about_texts = {
-        "ru": "Я бот с мини-играми, написанный на Python 🐍",
-        "en": "I'm a mini-games bot written in Python 🐍",
-        "kk": "Мен Python тілінде жазылған шағын ойындар ботымын 🐍",
-    }
-    return about_texts.get(language_code, about_texts["ru"])
-
-
-def format_stats(player):
-    return (
-        "Твоя статистика:\n"
-        f"Побед: {player['wins']}\n"
-        f"Поражений: {player['loses']}\n"
-        f"Всего игр: {player['games']}\n"
-        f"Монет: {player['coin']}\n"
-        f"Кубиков: {player['dice']}"
-    )
-
-
-async def random_fact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send(update, get_random_message(get_facts()))
-
-
+    await send(update, random.choice(facts))
 async def send(update, text):
     await update.effective_message.reply_text(text)
-
-
-async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    language_code = update.effective_user.language_code
-    await send(update, format_about(language_code))
-
 
 # --- Статистика ---
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     player = get_player_stats(user_id)
-    await send(update, format_stats(player))
+    await update.message.reply_text(
+        f"Твоя статистика:\n"
+        f"Побед: {player['wins']}\n"
+        f"Поражений: {player['loses']}\n"
+        f"Ничьих: {player['draws']}\n"
+        f"Очков: {player['points']}\n"
+        f"Всего игр: {player['games']}\n"
+        f"Монет: {player['coin']}\n"
+        f"Кубиков: {player['dice']}"
+    )
 
 # --- Общий обработчик текстовых сообщений ---
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -371,7 +435,6 @@ def main():
 
     app.add_handler(CommandHandler("start", start_game))
     app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("about", about_command))
     app.add_handler(
         CallbackQueryHandler(game_level_callback, pattern=r"^guess_level:")
     )
@@ -381,6 +444,8 @@ def main():
     app.add_handler(CommandHandler("rps", rps_game))
     app.add_handler(CommandHandler("fact", random_fact))
     app.add_handler(CommandHandler("stats", stats_command))
+    app.add_handler(CommandHandler("leaderboard", leaderboard))
+    app.add_handler(CommandHandler("fame", fame))
 
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text)
