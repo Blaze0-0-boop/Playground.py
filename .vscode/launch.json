@@ -2,16 +2,13 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "Python: Playground bot (pause on save)",
+      "name": "Python: Playground bot",
       "type": "debugpy",
       "request": "launch",
       "program": "${workspaceFolder}/playground.py",
       "python": "${command:python.interpreterPath}",
       "cwd": "${workspaceFolder}",
-      "console": "integratedTerminal",
-      "env": {
-        "BOT_DEBUG_SAVE": "1"
-      }
+      "console": "integratedTerminal"
     }
   ]
 }

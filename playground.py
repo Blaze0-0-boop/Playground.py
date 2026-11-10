@@ -21,57 +21,23 @@ def get_random_message(messages):
 
 
 FILE_NAME = "players.json"
-OLD_FILE_NAME = Path(__file__).with_name("bot_data.json")
 
-# --- Сохранение данных ---
+
 def load_data():
-    """Загружает игроков из JSON-файла."""
     try:
-        players_file = Path(__file__).with_name(FILE_NAME)
-        with open(players_file, "r", encoding="utf-8") as f:
-            players_data = json.load(f)
-    except FileNotFoundError:
-        players_data = {}
-    except json.JSONDecodeError:
-        players_data = {}
-    except (OSError, UnicodeError) as error:
-        raise RuntimeError(f"Не удалось прочитать данные из {FILE_NAME}.") from error
-
-    if isinstance(players_data, dict) and players_data:
-        return players_data
-
-    try:
-        with open(OLD_FILE_NAME, "r", encoding="utf-8") as f:
-            old_data = json.load(f)
+        with open(FILE_NAME, "r", encoding="utf-8") as f:
+            return json.load(f)
     except FileNotFoundError:
         return {}
-    except json.JSONDecodeError as error:
-        raise RuntimeError(
-            f"Файл со старыми данными {OLD_FILE_NAME} повреждён."
-        ) from error
-    except (OSError, UnicodeError) as error:
-        raise RuntimeError(
-            f"Не удалось прочитать старые данные из {OLD_FILE_NAME}."
-        ) from error
-
-    if isinstance(old_data, dict):
-        return old_data.get("players", {})
-    return {}
+    except json.JSONDecodeError:
+        return {}
 
 
 def save_data(data):
-    """Сохраняет игроков в JSON-файл."""
-    try:
-        if os.getenv("BOT_DEBUG_SAVE") == "1":
-            breakpoint()
-        players_file = Path(__file__).with_name(FILE_NAME)
-        with open(players_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except (OSError, TypeError, ValueError) as error:
-        raise RuntimeError(f"Не удалось сохранить данные в {FILE_NAME}.") from error
+    with open(FILE_NAME, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-# Загружаем игроков один раз при запуске бота.
 players = load_data()
 
 
