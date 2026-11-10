@@ -36,8 +36,6 @@ def load_data():
         players_data = {}
     except (OSError, UnicodeError) as error:
         raise RuntimeError(f"Не удалось прочитать данные из {FILE_NAME}.") from error
-    except (OSError, UnicodeError) as error:
-        raise RuntimeError(f"Не удалось прочитать данные из {FILE_NAME}.") from error
 
     if isinstance(players_data, dict) and players_data:
         return players_data
@@ -50,10 +48,6 @@ def load_data():
     except json.JSONDecodeError as error:
         raise RuntimeError(
             f"Файл со старыми данными {OLD_FILE_NAME} повреждён."
-        ) from error
-    except (OSError, UnicodeError) as error:
-        raise RuntimeError(
-            f"Не удалось прочитать старые данные из {OLD_FILE_NAME}."
         ) from error
     except (OSError, UnicodeError) as error:
         raise RuntimeError(
