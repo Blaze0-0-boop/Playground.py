@@ -14,40 +14,77 @@ from telegram.ext import (
     MessageHandler,
     filters,
 )
+
+
 def get_random_message(messages):
     return random.choice(messages)
-DATA_FILE = Path(__file__).with_name("bot_data.json")
 
-# --- Статистика ---
-def load_stats():
-    if not DATA_FILE.exists():
-        return {"players": {}}
+
+FILE_NAME = "players.json"
+OLD_FILE_NAME = Path(__file__).with_name("bot_data.json")
+
+# --- Сохранение данных ---
+def load_data():
+    """Загружает игроков из JSON-файла."""
+    try:
+        players_file = Path(__file__).with_name(FILE_NAME)
+        with open(players_file, "r", encoding="utf-8") as f:
+            players_data = json.load(f)
+    except FileNotFoundError:
+        players_data = {}
+    except json.JSONDecodeError:
+        players_data = {}
+    except (OSError, UnicodeError) as error:
+        raise RuntimeError(f"Не удалось прочитать данные из {FILE_NAME}.") from error
+    except (OSError, UnicodeError) as error:
+        raise RuntimeError(f"Не удалось прочитать данные из {FILE_NAME}.") from error
+
+    if isinstance(players_data, dict) and players_data:
+        return players_data
 
     try:
-        with open(DATA_FILE, "r", encoding="utf-8") as file:
-            data = json.load(file)
-    except (OSError, json.JSONDecodeError) as error:
+        with open(OLD_FILE_NAME, "r", encoding="utf-8") as f:
+            old_data = json.load(f)
+    except FileNotFoundError:
+        return {}
+    except json.JSONDecodeError as error:
         raise RuntimeError(
-            f"Не удалось прочитать статистику из файла {DATA_FILE}"
+            f"Файл со старыми данными {OLD_FILE_NAME} повреждён."
+        ) from error
+    except (OSError, UnicodeError) as error:
+        raise RuntimeError(
+            f"Не удалось прочитать старые данные из {OLD_FILE_NAME}."
+        ) from error
+    except (OSError, UnicodeError) as error:
+        raise RuntimeError(
+            f"Не удалось прочитать старые данные из {OLD_FILE_NAME}."
         ) from error
 
-    if not isinstance(data, dict) or not isinstance(data.get("players"), dict):
-        raise ValueError(
-            f"Файл статистики {DATA_FILE} имеет неверный формат: "
-            "ожидался объект с полем 'players'."
-        )
-    return data
+    if isinstance(old_data, dict):
+        return old_data.get("players", {})
+    return {}
 
-stats = load_stats()
 
-def save_stats():
-    with open(DATA_FILE, "w", encoding="utf-8") as file:
-        json.dump(stats, file, ensure_ascii=False, indent=2)
+def save_data(data):
+    """Сохраняет игроков в JSON-файл."""
+    try:
+        if os.getenv("BOT_DEBUG_SAVE") == "1":
+            breakpoint()
+        players_file = Path(__file__).with_name(FILE_NAME)
+        with open(players_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except (OSError, TypeError, ValueError) as error:
+        raise RuntimeError(f"Не удалось сохранить данные в {FILE_NAME}.") from error
+
+
+# Загружаем игроков один раз при запуске бота.
+players = load_data()
+
 
 def get_player_stats(user_id):
     player_id = str(user_id)
-    if player_id not in stats["players"]:
-        stats["players"][player_id] = {
+    if player_id not in players:
+        players[player_id] = {
             "wins": 0,
             "loses": 0,
             "games": 0,
@@ -56,10 +93,11 @@ def get_player_stats(user_id):
             "coin": 0,
             "dice": 0,
         }
-    player = stats["players"][player_id]
+    player = players[player_id]
     player.setdefault("draws", 0)
     player.setdefault("points", player.get("wins", 0) * 3 + player["draws"])
     return player
+
 
 def update_game_result(user_id, win):
     player = get_player_stats(user_id)
@@ -72,7 +110,7 @@ def update_game_result(user_id, win):
     else:
         player["draws"] += 1
         player["points"] += 1
-    save_stats()
+    save_data(players)
 
 # --- Состояние текущих игр ---
 games = {}
@@ -121,7 +159,7 @@ async def start_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/stats — статистика\n"
         "/leaderboard — таблица лидеров\n\n"
         "/fame — зал славы игроков с 3+ победами\n\n"
-        f"{format_leaderboard(stats.get('players', {}))}\n\n"
+        f"{format_leaderboard(players)}\n\n"
         "/help — помощь\n"
     )
 
@@ -148,11 +186,6 @@ def format_leaderboard(players):
     if not players:
         return "Пока нет игроков."
 
-    players_with_three_wins = [
-        (user_id, player)
-        for user_id, player in players.items()
-        if player.get("wins", 0) >= 3
-    ]
     top_players = sorted(
         players.items(),
         key=lambda item: item[1].get(
@@ -161,28 +194,27 @@ def format_leaderboard(players):
         ),
         reverse=True,
     )[:5]
-    lines = [
-        "🏆 Топ-5 по очкам (победа — 3, ничья — 1):",
-        f"Игроков с 3+ победами: {len(players_with_three_wins)}",
-    ]
+    lines = ["🏆 Топ-5 по очкам (победа — 3, ничья — 1):"]
 
     for place, (user_id, player) in enumerate(top_players, start=1):
+        points = player.get(
+            "points",
+            player.get("wins", 0) * 3 + player.get("draws", 0),
+        )
         lines.append(
-            f"{place}. Игрок {user_id} — "
-            f"{player.get('points', player.get('wins', 0) * 3 + player.get('draws', 0))} очков"
+            f"{place}. Игрок {user_id} — {points} очков"
         )
 
     return "\n".join(lines)
 
 
 async def leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await send(update, format_leaderboard(stats.get("players", {})))
-
+    await send(update, format_leaderboard(players))
 
 async def fame(update: Update, context: ContextTypes.DEFAULT_TYPE):
     famous_players = [
         (user_id, player)
-        for user_id, player in stats.get("players", {}).items()
+        for user_id, player in players.items()
         if player.get("wins", 0) >= 3
     ]
     if not famous_players:
@@ -198,18 +230,13 @@ async def fame(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reverse=True,
     )[:5]
     lines = ["🌟 Зал славы — игроки с 3+ победами:"]
-
     for place, (user_id, player) in enumerate(top_players, start=1):
         points = player.get(
             "points",
             player.get("wins", 0) * 3 + player.get("draws", 0),
         )
         lines.append(f"{place}. Игрок {user_id} — {points} очков")
-
     await send(update, "\n".join(lines))
-
-
-
 
 # --- /guess: уровни ---
 async def guess_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -298,7 +325,7 @@ async def coin_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     result = random.choice(["орёл", "решка"])
     player = get_player_stats(update.effective_user.id)
     player["coin"] += 1
-    save_stats()
+    save_data(players)
     await update.message.reply_text(f"Подбрасываю монетку... Выпало: {result}!")
 
 # --- Кубик ---
@@ -320,7 +347,7 @@ async def dice_game(update: Update, context: ContextTypes.DEFAULT_TYPE):
     roll = random.randint(1, sides)
     player = get_player_stats(update.effective_user.id)
     player["dice"] += 1
-    save_stats()
+    save_data(players)
     await update.message.reply_text(f"🎲 Бросок кубика: {roll} / {sides}")
 
 # --- Камень / Ножницы / Бумага ---
@@ -386,6 +413,7 @@ async def send(update, text):
 async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     player = get_player_stats(user_id)
+    save_data(players)
     await update.message.reply_text(
         f"Твоя статистика:\n"
         f"Побед: {player['wins']}\n"
@@ -446,7 +474,6 @@ def main():
     app.add_handler(CommandHandler("stats", stats_command))
     app.add_handler(CommandHandler("leaderboard", leaderboard))
     app.add_handler(CommandHandler("fame", fame))
-
     app.add_handler(
         MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text)
     )
